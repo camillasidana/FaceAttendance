@@ -10,7 +10,7 @@ from scipy.spatial.distance import cosine
 # ---------- CONFIG ----------
 MODEL_PATH = "models/svm.joblib"
 MEANS_PATH = "models/means.json"
-THRESHOLD = 0.40       # Lower = stricter; higher = more tolerant
+THRESHOLD = 0.45       # Lower = stricter; higher = more tolerant
 DETECTOR = "opencv" 
 EMBEDDING_MODEL = "SFace"  # ⚡ Fast & accurate
 FRAME_SKIP = 1    
@@ -108,3 +108,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
