@@ -2,20 +2,21 @@ import cv2
 import numpy as np
 from joblib import load
 import json
-from datetime import datetime
+from datetime import datetime, date
 from deepface import DeepFace
 from src.db import init_db, add_employee, mark_attendance
 from scipy.spatial.distance import cosine
+import csv
+import os
 
 # ---------- CONFIG ----------
 MODEL_PATH = "models/svm.joblib"
 MEANS_PATH = "models/means.json"
 THRESHOLD = 0.45       # Lower = stricter; higher = more tolerant
-DETECTOR = "opencv" 
-EMBEDDING_MODEL = "SFace"  # ⚡ Fast & accurate
-FRAME_SKIP = 1    
-RESOLUTION = (640, 480) # Webcam resolution
-ROTATE_MODE = cv2.ROTATE_90_CLOCKWISE  # Fix camera orientation
+DETECTOR = "opencv"
+EMBEDDING_MODEL = "SFace"
+FRAME_SKIP = 1
+RESOLUTION = (640, 480)
 
 # ---------- HELPERS ----------
 def get_embedding(face_img):
@@ -42,6 +43,20 @@ def identify_person(embedding, means):
             best_score, best_label = score, name
     return best_label if best_score < THRESHOLD else "Unknown"
 
+def log_to_csv(name, timestamp, status="present"):
+    """Save attendance to a daily CSV file."""
+    today = date.today().strftime("%Y-%m-%d")
+    folder = "attendance_logs"
+    os.makedirs(folder, exist_ok=True)
+    filepath = os.path.join(folder, f"attendance_{today}.csv")
+
+    file_exists = os.path.isfile(filepath)
+    with open(filepath, "a", newline="") as f:
+        writer = csv.writer(f)
+        if not file_exists:
+            writer.writerow(["Name", "Timestamp", "Status"])
+        writer.writerow([name, timestamp, status])
+
 # ---------- MAIN LOOP ----------
 def main():
     init_db()
@@ -62,13 +77,15 @@ def main():
     print("🎥 Camera started — press 'q' to quit.")
     frame_count = 0
 
+    # Track who has been marked present in this session
+    marked_today = set()
+
     while True:
         ok, frame = cap.read()
         if not ok:
             break
 
         frame = cv2.resize(frame, RESOLUTION)
-
         frame_count += 1
 
         # Skip frames to reduce lag
@@ -91,11 +108,22 @@ def main():
 
                 if name != "Unknown":
                     ts = datetime.now().isoformat(timespec="seconds")
-                    add_employee(name)
-                    mark_attendance(name, ts, "present")
+
+                    # Only mark once per session
+                    if name not in marked_today:
+                        add_employee(name)
+                        mark_attendance(name, ts, "present")
+                        log_to_csv(name, ts, "present")
+                        marked_today.add(name)
+                        text = f"{name} ✅ Marked"
+                        print(f"📋 Marked attendance for {name} at {ts}")
+                    else:
+                        text = f"{name} (Already marked)"
+                else:
+                    text = "Unknown"
 
                 cv2.rectangle(frame, (x, y), (x+w, y+h), color, 2)
-                cv2.putText(frame, name, (x, y-8),
+                cv2.putText(frame, text, (x, y-8),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
 
         cv2.imshow("Attendance", frame)
@@ -105,7 +133,7 @@ def main():
     cap.release()
     cv2.destroyAllWindows()
     print("👋 Attendance session ended.")
+    print(f"✅ Attendance saved for: {', '.join(marked_today) if marked_today else 'No one'}")
 
 if __name__ == "__main__":
     main()
-
