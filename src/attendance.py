@@ -13,7 +13,7 @@ MEANS_PATH = "models/means.json"
 THRESHOLD = 0.40       # Lower = stricter; higher = more tolerant
 DETECTOR = "opencv" 
 EMBEDDING_MODEL = "SFace"  # ⚡ Fast & accurate
-FRAME_SKIP = 7          # Process 1 in every 7 frames
+FRAME_SKIP = 1    
 RESOLUTION = (640, 480) # Webcam resolution
 ROTATE_MODE = cv2.ROTATE_90_CLOCKWISE  # Fix camera orientation
 
