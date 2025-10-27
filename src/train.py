@@ -1,33 +1,61 @@
+import os
 import pandas as pd
+import numpy as np
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
-from sklearn.pipeline import make_pipeline
 from sklearn.linear_model import LogisticRegression
 from sklearn.svm import SVC
 from sklearn.tree import DecisionTreeClassifier
-from joblib import dump
-import os
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+import joblib, json
 
-DATA_CSV = "data/processed/faces_data.csv"
+PROCESSED_FILE = "data/processed/faces_data.csv"
 
 def main():
-    if not os.path.exists(DATA_CSV):
-        raise SystemExit("Run: python main.py --stage prep  (to create faces_data.csv)")
-    df = pd.read_csv(DATA_CSV)
+    # ---------- Load prepared embeddings ----------
+    if not os.path.exists(PROCESSED_FILE):
+        raise SystemExit("❌ No processed data found. Run --stage prep first.")
+    df = pd.read_csv(PROCESSED_FILE)
+
     X = df.drop(columns=["label"]).values
     y = df["label"].values
-    Xtr, Xte, ytr, yte = train_test_split(X, y, test_size=0.2, stratify=y, random_state=42)
 
+    # ---------- Split ----------
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.25, random_state=42, stratify=y
+    )
+
+    # ---------- Define models ----------
     models = {
-        "logreg": make_pipeline(StandardScaler(with_mean=False), LogisticRegression(max_iter=200)),
-        "svm": make_pipeline(StandardScaler(with_mean=False), SVC(probability=True)),
-        "dt": DecisionTreeClassifier()
+        "logreg": LogisticRegression(max_iter=500),
+        "svm": SVC(probability=True, kernel="rbf", C=1),
+        "dt": DecisionTreeClassifier(random_state=42)
     }
+
     os.makedirs("models", exist_ok=True)
-    for name, mdl in models.items():
-        mdl.fit(Xtr, ytr)
-        dump(mdl, f"models/{name}.joblib")
-        print(f"Saved models/{name}.joblib")
+
+    # ---------- Train + evaluate ----------
+    for name, model in models.items():
+        print(f"\n🧠 Training {name.upper()} model ...")
+        model.fit(X_train, y_train)
+        y_pred = model.predict(X_test)
+
+        acc = accuracy_score(y_test, y_pred)
+        print(f"✅ {name} accuracy: {acc:.3f}")
+        print(confusion_matrix(y_test, y_pred))
+        print(classification_report(y_test, y_pred, digits=3))
+
+        joblib.dump(model, f"models/{name}.joblib")
+        print(f"💾 Saved → models/{name}.joblib")
+
+    # ---------- Save mean embeddings per person ----------
+    means = {}
+    for label in np.unique(y_train):
+        means[label] = np.mean(X_train[y_train == label], axis=0).tolist()
+    with open("models/means.json", "w") as f:
+        json.dump(means, f)
+    print("💾 Saved → models/means.json (for unknown-face thresholding)")
+
+    print("\n🎉 Training complete!")
 
 if __name__ == "__main__":
     main()
