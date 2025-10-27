@@ -29,7 +29,7 @@ python main.py --stage prep
 python main.py --stage train
 python main.py --stage attend
 ```
-You must see a box of your name around your face now.
+You must see a box of your name around your face now. Your attend has been marked and it gets saved to a csv file in \attendance_logs\ once you close the cam. To close the cam, press "q".
 To get the evaluations run :
 ```python
 python main.py --stage eval
@@ -37,5 +37,6 @@ python main.py --stage eval
 And those are our test results.
 That's it!
 Thank you!
+
 
 
