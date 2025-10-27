@@ -1,0 +1,11 @@
+
+numpy
+pandas
+opencv-contrib-python
+scikit-learn
+matplotlib
+seaborn
+jupyter
+joblib
+SQLAlchemy
+pyyaml
