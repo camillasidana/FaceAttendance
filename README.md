@@ -33,7 +33,7 @@ This will train the model and will also give you perfomace results of each of th
 python main.py --stage attend
 ```
 The app automatically chooses the best model based on the previous results.
-You must see a box of your name around your face now. Your attend has been marked and it gets saved to attendance.db file in .\data\ once you close the cam. To close the cam, press "q". You can now view the attendance using simple queries on sqlite3. Following is how you can do it :
+You must see a box of your name around your face now. Your attendance has been marked and it gets saved to attendance.db file in .\data\ once you close the cam. To close the cam, press "q". You can now view the attendance using simple queries on sqlite3. Following is how you can do it :
 Make sure you already have sqlite3. On the terminal write,
 ```bash
 sqlite3 data/attendance.db
@@ -45,6 +45,7 @@ SELECT * FROM attendance;
 ```
 That's it!
 Thank you!
+
 
 
 
