@@ -27,16 +27,25 @@ After this run :
 ```python
 python main.py --stage prep
 python main.py --stage train
+```
+This will train the model and will also give you perfomace results of each of those models.
+```python
 python main.py --stage attend
 ```
-You must see a box of your name around your face now. Your attend has been marked and it gets saved to a csv file in \attendance_logs\ once you close the cam. To close the cam, press "q".
-To get the evaluations run :
-```python
-python main.py --stage eval
+The app automatically chooses the best model based on the previous results.
+You must see a box of your name around your face now. Your attend has been marked and it gets saved to attendance.db file in .\data\ once you close the cam. To close the cam, press "q". You can now view the attendance using simple queries on sqlite3. Following is how you can do it :
+Make sure you already have sqlite3. On the terminal write,
+```bash
+sqlite3 data/attendance.db
 ```
-And those are our test results.
+Now in sqlite3 write the following query,
+```sql
+.tables
+SELECT * FROM attendance;
+```
 That's it!
 Thank you!
+
 
 
 
