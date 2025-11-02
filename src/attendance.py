@@ -12,11 +12,11 @@ BEST_MODEL_PATH = "models/best_model.json"
 SCALER_PATH = "models/scaler.joblib"
 PCA_PATH = "models/pca.joblib"  # optional, if PCA was used
 CONFIDENCE_THRESHOLD = 0.98
-DETECTOR = "mtcnn"
+DETECTOR = "mtcnn"  # 🧠 Use MTCNN for detection
 EMBEDDING_MODEL = "ArcFace"
 FRAME_SKIP = 1
 RESOLUTION = (640, 480)
-DB_PATH = "data/attendance.db"  # 🧠 SQLite database file path
+DB_PATH = "data/attendance.db"  # SQLite database file
 
 
 # ---------- DATABASE HELPERS ----------
@@ -73,38 +73,33 @@ def fetch_today():
 
 
 # ---------- ML HELPERS ----------
-def get_embedding(face_img):
-    """Extract DeepFace embedding."""
+def get_embeddings_from_frame(frame):
+    """Use DeepFace (MTCNN) to detect all faces and extract their embeddings."""
     try:
-        if face_img is None or face_img.size == 0:
-            return None
-        h, w, _ = face_img.shape
-        if h < 40 or w < 40:
-            return None
-
-        cv2.imwrite("temp_face.jpg", face_img)
-        emb = DeepFace.represent(
-            img_path="temp_face.jpg",
+        results = DeepFace.represent(
+            img_path=frame,
             model_name=EMBEDDING_MODEL,
             detector_backend=DETECTOR,
             enforce_detection=False
         )
-        if not emb:
-            return None
-
-        vec = np.array(emb[0]["embedding"], dtype=np.float32)
-        if vec.size == 0:
-            return None
-        return vec
+        if not results:
+            return []
+        embeddings = []
+        for face in results:
+            embedding = np.array(face["embedding"], dtype=np.float32)
+            region = face["facial_area"]
+            embeddings.append((embedding, region))
+        return embeddings
     except Exception as e:
-        print(f"⚠️ Embedding error: {e}")
-        return None
+        print(f"⚠️ DeepFace error: {e}")
+        return []
 
 
 def identify_person_model(embedding, model, scaler, pca):
     """Predict identity using trained ML model."""
     try:
         embedding_scaled = scaler.transform([embedding])
+
 
         pred = model.predict(embedding_scaled)[0]
 
@@ -150,7 +145,6 @@ def main():
     if not cap.isOpened():
         raise SystemExit("❌ Webcam not found.")
 
-    cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
     print("🎥 Camera started — press 'q' to quit.")
     frame_count = 0
     marked_today = fetch_today()
@@ -168,21 +162,14 @@ def main():
                 break
             continue
 
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        faces = cascade.detectMultiScale(gray, 1.1, 5)
+        # Detect faces and get embeddings using MTCNN
+        faces = get_embeddings_from_frame(frame)
 
-        for (x, y, w, h) in faces:
-            if w < 40 or h < 40:
-                continue
-
-            roi = frame[y:y+h, x:x+w]
-            embedding = get_embedding(roi)
-            if embedding is None:
-                continue
+        for embedding, region in faces:
+            x, y, w, h = region["x"], region["y"], region["w"], region["h"]
 
             name, conf = identify_person_model(embedding, model, scaler, pca)
             conf_text = f"conf={conf:.2f}"
-
             color = (0, 255, 0) if name != "Unknown" else (0, 0, 255)
 
             if name != "Unknown":
@@ -195,6 +182,7 @@ def main():
             else:
                 text = "Unknown"
 
+            # Draw bounding box and label
             cv2.rectangle(frame, (x, y), (x+w, y+h), color, 2)
             cv2.putText(frame, f"{text} [{conf_text}]",
                         (x, y-8), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
