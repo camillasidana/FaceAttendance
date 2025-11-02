@@ -4,24 +4,84 @@ from joblib import load
 import json
 from datetime import datetime, date
 from deepface import DeepFace
-from src.db import init_db, add_employee, mark_attendance
-from scipy.spatial.distance import cosine
-import csv
 import os
+import sqlite3
 
 # ---------- CONFIG ----------
-MODEL_PATH = "models/svm.joblib"
-MEANS_PATH = "models/means.json"
-THRESHOLD = 0.45       # Lower = stricter; higher = more tolerant
-DETECTOR = "opencv"
-EMBEDDING_MODEL = "SFace"
+BEST_MODEL_PATH = "models/best_model.json"
+SCALER_PATH = "models/scaler.joblib"
+PCA_PATH = "models/pca.joblib"  # optional, if PCA was used
+CONFIDENCE_THRESHOLD = 0.98
+DETECTOR = "mtcnn"
+EMBEDDING_MODEL = "ArcFace"
 FRAME_SKIP = 1
 RESOLUTION = (640, 480)
+DB_PATH = "data/attendance.db"  # 🧠 SQLite database file path
 
-# ---------- HELPERS ----------
+
+# ---------- DATABASE HELPERS ----------
+def init_db():
+    """Create the attendance database and table if not exist."""
+    os.makedirs("data", exist_ok=True)
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS attendance (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            timestamp TEXT NOT NULL,
+            status TEXT DEFAULT 'present',
+            date TEXT
+        )
+    ''')
+    conn.commit()
+    conn.close()
+    print("🗄️ Database initialized at:", DB_PATH)
+
+
+def mark_attendance_db(name, status="present"):
+    """Insert attendance into the database; prevent duplicates per day."""
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    ts = datetime.now().isoformat(timespec='seconds')
+    today = date.today().isoformat()
+
+    # Check if already marked
+    cur.execute("SELECT * FROM attendance WHERE name=? AND date=?", (name, today))
+    existing = cur.fetchone()
+
+    if existing:
+        print(f"⚠️ {name} already marked today.")
+    else:
+        cur.execute("INSERT INTO attendance (name, timestamp, status, date) VALUES (?, ?, ?, ?)",
+                    (name, ts, status, today))
+        conn.commit()
+        print(f"📋 Marked attendance for {name} at {ts}")
+
+    conn.close()
+
+
+def fetch_today():
+    """Fetch today's attendance for display or logic."""
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    today = date.today().isoformat()
+    cur.execute("SELECT name FROM attendance WHERE date=?", (today,))
+    rows = [r[0] for r in cur.fetchall()]
+    conn.close()
+    return set(rows)
+
+
+# ---------- ML HELPERS ----------
 def get_embedding(face_img):
-    """Extract DeepFace embedding for a detected face."""
+    """Extract DeepFace embedding."""
     try:
+        if face_img is None or face_img.size == 0:
+            return None
+        h, w, _ = face_img.shape
+        if h < 40 or w < 40:
+            return None
+
         cv2.imwrite("temp_face.jpg", face_img)
         emb = DeepFace.represent(
             img_path="temp_face.jpg",
@@ -29,66 +89,79 @@ def get_embedding(face_img):
             detector_backend=DETECTOR,
             enforce_detection=False
         )
-        return np.array(emb[0]["embedding"]) if emb else None
+        if not emb:
+            return None
+
+        vec = np.array(emb[0]["embedding"], dtype=np.float32)
+        if vec.size == 0:
+            return None
+        return vec
     except Exception as e:
-        print(f"Embedding error: {e}")
+        print(f"⚠️ Embedding error: {e}")
         return None
 
-def identify_person(embedding, means):
-    """Compare embedding to stored mean embeddings; return best match or Unknown."""
-    best_label, best_score = None, 1e9
-    for name, mean_vec in means.items():
-        score = cosine(embedding, mean_vec)
-        if score < best_score:
-            best_score, best_label = score, name
-    return best_label if best_score < THRESHOLD else "Unknown"
 
-def log_to_csv(name, timestamp, status="present"):
-    """Save attendance to a daily CSV file."""
-    today = date.today().strftime("%Y-%m-%d")
-    folder = "attendance_logs"
-    os.makedirs(folder, exist_ok=True)
-    filepath = os.path.join(folder, f"attendance_{today}.csv")
+def identify_person_model(embedding, model, scaler, pca):
+    """Predict identity using trained ML model."""
+    try:
+        embedding_scaled = scaler.transform([embedding])
 
-    file_exists = os.path.isfile(filepath)
-    with open(filepath, "a", newline="") as f:
-        writer = csv.writer(f)
-        if not file_exists:
-            writer.writerow(["Name", "Timestamp", "Status"])
-        writer.writerow([name, timestamp, status])
+        pred = model.predict(embedding_scaled)[0]
 
-# ---------- MAIN LOOP ----------
+        # Compute model confidence if available
+        if hasattr(model, "predict_proba"):
+            conf = np.max(model.predict_proba(embedding_scaled))
+            if conf < CONFIDENCE_THRESHOLD:
+                return "Unknown", conf
+            return pred, conf
+        else:
+            return pred, 1.0
+    except Exception as e:
+        print(f"⚠️ Model identification error: {e}")
+        return "Unknown", 0.0
+
+
+# ---------- MAIN ----------
 def main():
+    print("📦 Loading ML model...")
+
+    # Initialize DB
     init_db()
 
-    print("📦 Loading models...")
-    model = load(MODEL_PATH)
-    with open(MEANS_PATH, "r") as f:
-        means = json.load(f)
+    # Load best model info
+    with open(BEST_MODEL_PATH, "r") as f:
+        best_info = json.load(f)
+    best_model_name = best_info["best_model"]
+    print(f"🏆 Best model detected: {best_model_name.upper()}")
 
+    # Load scaler and PCA (if present)
+    scaler = load(SCALER_PATH)
+    pca = load(PCA_PATH) if os.path.exists(PCA_PATH) else None
+
+    # Load the trained ML model
+    model_path = f"models/{best_model_name}.joblib"
+    model = load(model_path)
+    print(f"✅ Loaded {best_model_name.upper()} model")
+
+    # Initialize webcam
     cap = cv2.VideoCapture(0)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, RESOLUTION[0])
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, RESOLUTION[1])
-
     if not cap.isOpened():
         raise SystemExit("❌ Webcam not found.")
 
     cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
     print("🎥 Camera started — press 'q' to quit.")
     frame_count = 0
-
-    # Track who has been marked present in this session
-    marked_today = set()
+    marked_today = fetch_today()
 
     while True:
         ok, frame = cap.read()
         if not ok:
             break
-
         frame = cv2.resize(frame, RESOLUTION)
         frame_count += 1
 
-        # Skip frames to reduce lag
         if frame_count % FRAME_SKIP != 0:
             cv2.imshow("Attendance", frame)
             if cv2.waitKey(1) & 0xFF == ord('q'):
@@ -99,32 +172,32 @@ def main():
         faces = cascade.detectMultiScale(gray, 1.1, 5)
 
         for (x, y, w, h) in faces:
-            roi_color = frame[y:y+h, x:x+w]
-            embedding = get_embedding(roi_color)
+            if w < 40 or h < 40:
+                continue
 
-            if embedding is not None:
-                name = identify_person(embedding, means)
-                color = (0, 255, 0) if name != "Unknown" else (0, 0, 255)
+            roi = frame[y:y+h, x:x+w]
+            embedding = get_embedding(roi)
+            if embedding is None:
+                continue
 
-                if name != "Unknown":
-                    ts = datetime.now().isoformat(timespec="seconds")
+            name, conf = identify_person_model(embedding, model, scaler, pca)
+            conf_text = f"conf={conf:.2f}"
 
-                    # Only mark once per session
-                    if name not in marked_today:
-                        add_employee(name)
-                        mark_attendance(name, ts, "present")
-                        log_to_csv(name, ts, "present")
-                        marked_today.add(name)
-                        text = f"{name} ✅ Marked"
-                        print(f"📋 Marked attendance for {name} at {ts}")
-                    else:
-                        text = f"{name} (Already marked)"
+            color = (0, 255, 0) if name != "Unknown" else (0, 0, 255)
+
+            if name != "Unknown":
+                if name not in marked_today:
+                    mark_attendance_db(name)
+                    marked_today.add(name)
+                    text = f"{name} ✅"
                 else:
-                    text = "Unknown"
+                    text = f"{name} (Already marked)"
+            else:
+                text = "Unknown"
 
-                cv2.rectangle(frame, (x, y), (x+w, y+h), color, 2)
-                cv2.putText(frame, text, (x, y-8),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
+            cv2.rectangle(frame, (x, y), (x+w, y+h), color, 2)
+            cv2.putText(frame, f"{text} [{conf_text}]",
+                        (x, y-8), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
 
         cv2.imshow("Attendance", frame)
         if cv2.waitKey(1) & 0xFF == ord('q'):
@@ -134,6 +207,7 @@ def main():
     cv2.destroyAllWindows()
     print("👋 Attendance session ended.")
     print(f"✅ Attendance saved for: {', '.join(marked_today) if marked_today else 'No one'}")
+
 
 if __name__ == "__main__":
     main()
