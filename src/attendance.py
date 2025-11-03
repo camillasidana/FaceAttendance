@@ -96,12 +96,25 @@ def get_embeddings_from_frame(frame):
 
 
 def identify_person_model(embedding, model, scaler, pca):
-    """Predict identity using trained ML model."""
+    """Predict identity using trained ML model (with optional PCA)."""
     try:
         embedding_scaled = scaler.transform([embedding])
-
+        if pca is not None:
+            embedding_scaled = pca.transform(embedding_scaled)  # Apply PCA
 
         pred = model.predict(embedding_scaled)[0]
+
+        if hasattr(model, "predict_proba"):
+            conf = np.max(model.predict_proba(embedding_scaled))
+            if conf < CONFIDENCE_THRESHOLD:
+                return "Unknown", conf
+            return pred, conf
+        else:
+            return pred, 1.0
+    except Exception as e:
+        print(f"⚠️ Model identification error: {e}")
+        return "Unknown", 0.0
+
 
         # Compute model confidence if available
         if hasattr(model, "predict_proba"):
