@@ -1,16 +1,18 @@
 import os
 import pandas as pd
-from deepface import DeepFace
 import numpy as np
+from deepface import DeepFace
+from sklearn.decomposition import PCA
+import joblib
 
 RAW_DIR = "data/raw"
 PROCESSED_FILE = "data/processed/faces_data.csv"
 TEST_RAW_DIR = "data/test_raw"
 TEST_PROCESSED_FILE = "data/processed/test_faces_data.csv"
-
+PCA_PATH = "models/pca.joblib"
 
 def extract_embedding(img_path):
-    """Extract 512D face embedding using DeepFace (ArcFace model with MTCNN backend)."""
+    """Extract 512D face embedding using DeepFace ArcFace + MTCNN."""
     try:
         embedding_objs = DeepFace.represent(
             img_path=img_path,
@@ -19,60 +21,59 @@ def extract_embedding(img_path):
             enforce_detection=False
         )
         if embedding_objs and len(embedding_objs) > 0:
-            return np.array(embedding_objs[0]["embedding"], dtype=np.float32)
+            return np.array(embedding_objs[0]["embedding"])
     except Exception as e:
-        print(f"⚠️ Error processing {img_path}: {e}")
+        print(f"Error processing {img_path}: {e}")
     return None
 
 
-def process_dataset(raw_dir, output_file):
-    """Process all face images in a folder structure and save embeddings to CSV."""
-    embeddings_list = []
-    labels_list = []
-
-    for person_name in os.listdir(raw_dir):
-        person_dir = os.path.join(raw_dir, person_name)
+def process_folder(folder_path):
+    """Return embeddings and labels for all images in a folder."""
+    data, labels = [], []
+    for person_name in os.listdir(folder_path):
+        person_dir = os.path.join(folder_path, person_name)
         if not os.path.isdir(person_dir):
             continue
 
-        print(f"📷 Processing {person_name}...")
+        print(f"Processing {person_name}...")
         for filename in os.listdir(person_dir):
             img_path = os.path.join(person_dir, filename)
-            embedding = extract_embedding(img_path)
-            if embedding is not None:
-                # Normalize embedding for stability
-                embedding = embedding / (np.linalg.norm(embedding) + 1e-8)
-                embeddings_list.append(embedding)
-                labels_list.append(person_name)
+            emb = extract_embedding(img_path)
+            if emb is not None:
+                emb = emb / (np.linalg.norm(emb) + 1e-8)
+                data.append(emb)
+                labels.append(person_name)
 
-    # Convert lists to NumPy arrays
-    if len(embeddings_list) == 0:
-        print(f"⚠️ No valid embeddings found in {raw_dir}. Skipping.")
-        return
-
-    embeddings = np.vstack(embeddings_list)
-    labels = np.array(labels_list, dtype=str)
-
-    # Combine into a DataFrame
-    df = pd.DataFrame(embeddings)
-    df["label"] = labels
-
-    os.makedirs(os.path.dirname(output_file), exist_ok=True)
-    df.to_csv(output_file, index=False)
-    print(f"✅ Saved {len(df)} embeddings → {output_file}")
+    return np.vstack(data), np.array(labels, dtype=str)
 
 
 def main():
-    print("🚀 Starting embedding extraction...")
+    os.makedirs("data/processed", exist_ok=True)
+    os.makedirs("models", exist_ok=True)
 
-    # Process training data
-    process_dataset(RAW_DIR, PROCESSED_FILE)
+    print("📦 Extracting training embeddings...")
+    X_train, y_train = process_folder(RAW_DIR)
+    df_train = pd.DataFrame(X_train)
+    df_train["label"] = y_train
+    df_train.to_csv(PROCESSED_FILE, index=False)
+    print(f"✅ Saved {len(df_train)} samples to {PROCESSED_FILE}")
 
-    # Process testing data
-    process_dataset(TEST_RAW_DIR, TEST_PROCESSED_FILE)
+    print("📦 Extracting test embeddings...")
+    X_test, y_test = process_folder(TEST_RAW_DIR)
+    df_test = pd.DataFrame(X_test)
+    df_test["label"] = y_test
+    df_test.to_csv(TEST_PROCESSED_FILE, index=False)
+    print(f"✅ Saved {len(df_test)} samples to {TEST_PROCESSED_FILE}")
 
-    print("🎉 Embedding extraction complete!")
+    # ---- PCA INTEGRATION ----
+    print("⚙️ Applying PCA for dimensionality reduction...")
+    pca = PCA(n_components=0.95, random_state=42)  # keep 95% variance
+    pca.fit(X_train)
+    joblib.dump(pca, PCA_PATH)
+    print(f"💾 PCA model saved to {PCA_PATH}")
 
+    reduced_dim = pca.transform(X_train).shape[1]
+    print(f"✅ Reduced dimensionality: {X_train.shape[1]} → {reduced_dim}")
 
 if __name__ == "__main__":
     main()
